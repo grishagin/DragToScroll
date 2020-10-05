@@ -34,7 +34,7 @@ Setting("Button", "RButton")
 ; Delay time before drag starts
 ; You must click and release "Button" before this time;
 ; Increase if you are having trouble getting "normal behavior"
-Setting("DragDelay", 150)                     ; in ms. 
+Setting("DragDelay", 300)                     ; in ms. 
 
 ; How often to poll for mouse movement & drag
 ; The major time unit for this script, everything happens on this
@@ -123,11 +123,11 @@ Setting("UseDoubleClickCheck", true)
 ; If enabled, simple gestures are detected, (only supports flick UDLR)
 ; and gesture events are called for custom actions, 
 ; rather than dragging with momentum.
-Setting("UseGestureCheck", true)
+Setting("UseGestureCheck", false)
 Setting("GestureThreshold", 30)
 Setting("GesturePageSize", 15)
-Setting("GestureBrowserNames", "chrome.exe,firefox.exe,iexplore.exe")
-
+Setting("GestureBrowserNames", "chrome.exe firefox.exe iexplore.exe brave.exe explorer.exe")
+global ClickAndDragActive := false
 
 ; Server settings
 ; if enabled, the script automatically checks for updates at startup
@@ -316,26 +316,69 @@ Return
 ; Hotkey Handler for button down
 ;
 ButtonDown:
-Critical
-; Critical forces a hotkey handler thread to be attended to handling any others.
-; If not, a rapid click could cause the Button-Up event to be processed
-; before Button-Down, thanks to AHK's pseudo-multithreaded handling of hotkeys.
+  Critical
+  ; Critical forces a hotkey handler thread to be attended to handling any others.
+  ; If not, a rapid click could cause the Button-Up event to be processed
+  ; before Button-Down, thanks to AHK's pseudo-multithreaded handling of hotkeys.
+  ;
+  ; Thanks to 'Guest' for an update to these hotkey routines.
+  ; This update further cleans up, bigfixes, and simplifies the updates.
+
+  ; get window class under mouse cursor to check 
+  ; if regular click should be sent or the drag2scroll should be activated
+  MouseGetPos, , , CursorWinID
+  WinGet, CursorWinProcessName, ProcessName, ahk_id %CursorWinID%
+
+  ; if mouse was clicked over a predefined application (even if it's not active)
+  ; then only a regular right click will be sent
+  ; otherwise, a drag to scroll will be activated
+  If InStr(GestureBrowserNames, CursorWinProcessName)
+  {
+    ; ToolTip, In String! %CursorWinProcessName%
+    GoSub, DisabledButtonDown
+  }
+  else
+  {
+    ; ToolTip, % CursorWinProcessName GestureBrowserNames
+    GoSub, ClickAndDragStart
+  } 
+Return
+
+; Hotkey Handler for button up
 ;
-; Thanks to 'Guest' for an update to these hotkey routines.
-; This update further cleans up, bigfixes, and simplifies the updates.
+ButtonUp:
+  ; if the current button state is due to drag to scroll process being active
+  ; then end it gracefully 
+  ; else do a regular button up
+	If ClickAndDragActive
+	{
+		; ToolTip, Now Ending Scroll
+		GoSub, ClickAndDragEnd
+	}
+	else
+	{	
+		; ToolTip, No scroll, just button up
+		GoSub, DisabledButtonUp
+	} 
+Return
 
-   ; Initialize DragStatus, indicating a new click
-   DragStatus := DS_NEW
-   GoSub, Reset
+; originally known as ButtonDown
+; excised and renamed to encapsulate additional logic into the ButtonDown sub
+ClickAndDragStart:
+	ClickAndDragActive := true
 
-   ; Keep track of the last two click times.
-   ; This allows us to check for double clicks.
-   ;
-   ; Move the previously recorded time out, for the latest button press event.
-   ; Record the current time at the last click
-   ; The stack has only 2 spaces; older values are discarded.
-   TimeOf2ndLastButtonDown := TimeOfLastButtonDown
-   TimeOfLastButtonDown := A_TickCount
+	; Initialize DragStatus, indicating a new click
+	DragStatus := DS_NEW
+	GoSub, Reset
+
+	; Keep track of the last two click times.
+	; This allows us to check for double clicks.
+	;
+	; Move the previously recorded time out, for the latest button press event.
+	; Record the current time at the last click
+	; The stack has only 2 spaces; older values are discarded.
+	TimeOf2ndLastButtonDown := TimeOfLastButtonDown
+	TimeOfLastButtonDown := A_TickCount
 
     ; Capture the original position mouse position
     ; Window and Control Hwnds being hovered over
@@ -363,26 +406,27 @@ Critical
     if (Get("ScrollMethodY") = mWheelKey && !WinActive("ahk_id " . WinHwnd))
       WinActivate, ahk_id %WinHwnd%  
    
-   ; Optionally start a timer to see if 
-   ; user is holding but not moving the mouse
-   if (Get("UseMovementCheck"))
-     SetTimer, MovementCheck, % -1 * Abs(MovementCheckDelay)
+	; Optionally start a timer to see if 
+	; user is holding but not moving the mouse
+	if (Get("UseMovementCheck"))
+	 SetTimer, MovementCheck, % -1 * Abs(MovementCheckDelay)
 
-   if (!Get("ScrollDisabled"))
-   {
-     ; if scrolling is enabled,
-     ; schedule the drag to start after the delay.
-     ; specifying a negative interval forces the timer to run once
-     SetTimer, DragStart, % -1 * Abs(DragDelay)
-   }
-   else
-     GoSub, HoldStart
-Return
+	if (!Get("ScrollDisabled"))
+	{
+	 ; if scrolling is enabled,
+	 ; schedule the drag to start after the delay.
+	 ; specifying a negative interval forces the timer to run once
+	 SetTimer, DragStart, % -1 * Abs(DragDelay)
+	}
+	else
+	 GoSub, HoldStart  
+Return 
 
-; Hotkey Handler for button up
-;
-ButtonUp:
-
+; originally known as ButtonUp
+; excised and renamed to encapsulate additional logic into the ButtonUp sub
+ClickAndDragEnd:
+	ClickAndDragActive := false
+	
   ; Check for a double-click
   ; DoubleClickCheck may mark DragStatus as HANDLED
   if (UseDoubleClickCheck)
@@ -392,7 +436,7 @@ ButtonUp:
   ; and release any holds already started.
   SetTimer, MovementCheck, Off
   if (DragStatus == DS_HOLDING && GetKeyState(Button))
-      GoSub, HoldStop
+    GoSub, HoldStop
 
   ; If status is still NEW (not already dragging, or otherwise handled),
   ; then the user has released before the drag threshold.
